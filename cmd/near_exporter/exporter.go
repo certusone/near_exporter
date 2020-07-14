@@ -96,27 +96,27 @@ func NewSolanaCollector(rpcAddr string) prometheus.Collector {
 		client:  &http.Client{Timeout: httpTimeout},
 		rpcAddr: rpcAddr,
 		totalValidatorsDesc: prometheus.NewDesc(
-			"near_active_validators",
+			"near_exporter_active_validators",
 			"Total number of active validators",
 			nil, nil),
 		epochStartHeight: prometheus.NewDesc(
-			"near_epoch_start_height",
+			"near_exporter_epoch_start_height",
 			"Current epoch's start height",
 			nil, nil),
 		validatorStake: prometheus.NewDesc(
-			"near_validator_stake",
+			"near_exporter_validator_stake",
 			"Validator's stake",
 			[]string{"account_id"}, nil),
 		validatorExpectedBlocks: prometheus.NewDesc(
-			"near_validator_expected_blocks",
+			"near_exporter_validator_expected_blocks",
 			"Validators's expected blocks",
 			[]string{"account_id"}, nil),
 		validatorProducedBlocks: prometheus.NewDesc(
-			"near_validator_produced_blocks",
+			"near_exporter_validator_produced_blocks",
 			"Validator's actual produced blocks",
 			[]string{"account_id"}, nil),
 		validatorIsSlashed: prometheus.NewDesc(
-			"near_validator_is_slashed",
+			"near_exporter_validator_is_slashed",
 			"Whether the validator is slashed",
 			[]string{"account_id"}, nil),
 	}
