@@ -1,12 +1,10 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -122,92 +120,74 @@ func NewSolanaCollector(rpcAddr string) prometheus.Collector {
 	}
 }
 
-func (collector nearExporter) Describe(ch chan<- *prometheus.Desc) {
-	ch <- collector.totalValidatorsDesc
+func (c *nearExporter) Describe(ch chan<- *prometheus.Desc) {
+	ch <- c.totalValidatorsDesc
 }
 
-func (collector nearExporter) mustEmitMetrics(ch chan<- prometheus.Metric, response *ValidatorsResponse) {
-	ch <- prometheus.MustNewConstMetric(collector.totalValidatorsDesc, prometheus.GaugeValue,
+func (c *nearExporter) mustEmitMetrics(ch chan<- prometheus.Metric, response *ValidatorsResponse) {
+	ch <- prometheus.MustNewConstMetric(c.totalValidatorsDesc, prometheus.GaugeValue,
 		float64(len(response.Result.CurrentValidators)))
-	ch <- prometheus.MustNewConstMetric(collector.epochStartHeight, prometheus.GaugeValue,
+	ch <- prometheus.MustNewConstMetric(c.epochStartHeight, prometheus.GaugeValue,
 		float64(response.Result.EpochStartHeight))
 
 	for _, validator := range response.Result.CurrentValidators {
 		stake, err := strconv.ParseFloat(validator.Stake, 64)
 		if err != nil {
-			ch <- prometheus.NewInvalidMetric(collector.validatorStake, fmt.Errorf("invalid stake: %s", validator.Stake))
+			ch <- prometheus.NewInvalidMetric(c.validatorStake, fmt.Errorf("invalid stake: %s", validator.Stake))
 		} else {
-			ch <- prometheus.MustNewConstMetric(collector.validatorStake, prometheus.GaugeValue,
+			ch <- prometheus.MustNewConstMetric(c.validatorStake, prometheus.GaugeValue,
 				stake, validator.AccountID)
 		}
 
-		ch <- prometheus.MustNewConstMetric(collector.validatorExpectedBlocks, prometheus.GaugeValue,
+		ch <- prometheus.MustNewConstMetric(c.validatorExpectedBlocks, prometheus.GaugeValue,
 			float64(validator.NumExpectedBlocks), validator.AccountID)
-		ch <- prometheus.MustNewConstMetric(collector.validatorProducedBlocks, prometheus.GaugeValue,
+		ch <- prometheus.MustNewConstMetric(c.validatorProducedBlocks, prometheus.GaugeValue,
 			float64(validator.NumProducedBlocks), validator.AccountID)
 
 		if validator.IsSlashed {
-			ch <- prometheus.MustNewConstMetric(collector.validatorIsSlashed, prometheus.GaugeValue, 1, validator.AccountID)
+			ch <- prometheus.MustNewConstMetric(c.validatorIsSlashed, prometheus.GaugeValue, 1, validator.AccountID)
 		} else {
-			ch <- prometheus.MustNewConstMetric(collector.validatorIsSlashed, prometheus.GaugeValue, 0, validator.AccountID)
+			ch <- prometheus.MustNewConstMetric(c.validatorIsSlashed, prometheus.GaugeValue, 0, validator.AccountID)
 		}
 	}
 }
 
-func (collector nearExporter) Collect(ch chan<- prometheus.Metric) {
-	var (
-		validatorResponse ValidatorsResponse
-		body              []byte
-		err               error
-	)
+func (c *nearExporter) Collect(ch chan<- prometheus.Metric) {
+	err := c.collect(ch)
 
-	req, err := http.NewRequest("POST", collector.rpcAddr,
-		bytes.NewBufferString(`{"jsonrpc":"2.0","id":1, "method":"validators", "params":[null]}`))
 	if err != nil {
-		panic(err)
+		ch <- prometheus.NewInvalidMetric(c.totalValidatorsDesc, err)
+		ch <- prometheus.NewInvalidMetric(c.epochStartHeight, err)
+		ch <- prometheus.NewInvalidMetric(c.validatorStake, err)
+		ch <- prometheus.NewInvalidMetric(c.validatorExpectedBlocks, err)
+		ch <- prometheus.NewInvalidMetric(c.validatorProducedBlocks, err)
+		ch <- prometheus.NewInvalidMetric(c.validatorIsSlashed, err)
 	}
-	req.Header.Set("content-type", "application/json")
+}
 
-	resp, err := collector.client.Do(req)
+func (c *nearExporter) collect(ch chan<- prometheus.Metric) error {
+	// Work around https://github.com/near/nearcore/issues/3614 by only requesting
+	// validator data when the node is up-to-date.
+	if syncing, err := c.checkSyncStatus(); err != nil {
+		return fmt.Errorf("checkSyncStatus: %w", err)
+	} else if syncing {
+		return errors.New("cannot export validator metrics while the node is syncing")
+	}
+
+	validators, err := c.getValidatorInfo()
 	if err != nil {
-		goto error
-	}
-	defer resp.Body.Close()
-
-	body, err = ioutil.ReadAll(resp.Body)
-	if err != nil {
-		goto error
+		return fmt.Errorf("getValidatorInfo: %w", err)
 	}
 
-	if resp.StatusCode != 200 {
-		err = fmt.Errorf("status code %d, response: %s", resp.StatusCode, body)
-		goto error
-	}
-
-	if err = json.Unmarshal(body, &validatorResponse); err != nil {
-		goto error
-	}
-
-	if validatorResponse.Error.Code != 0 {
-		err = fmt.Errorf("JSONRPC error: %s", body)
-		goto error
-	}
-
-	collector.mustEmitMetrics(ch, &validatorResponse)
-	return
-
-error:
-	ch <- prometheus.NewInvalidMetric(collector.totalValidatorsDesc, err)
-	ch <- prometheus.NewInvalidMetric(collector.epochStartHeight, err)
-	ch <- prometheus.NewInvalidMetric(collector.validatorStake, err)
-	ch <- prometheus.NewInvalidMetric(collector.validatorExpectedBlocks, err)
-	ch <- prometheus.NewInvalidMetric(collector.validatorProducedBlocks, err)
-	ch <- prometheus.NewInvalidMetric(collector.validatorIsSlashed, err)
+	c.mustEmitMetrics(ch, validators)
+	return nil
 }
 
 func main() {
 	collector := NewSolanaCollector(nearRPCAddr)
 	prometheus.MustRegister(collector)
 	http.Handle("/metrics", promhttp.Handler())
+	log.Print("RPC address ", nearRPCAddr)
+	log.Print("Listening on ", listenAddr)
 	panic(http.ListenAndServe(listenAddr, nil))
 }
