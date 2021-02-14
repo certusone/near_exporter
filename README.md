@@ -2,23 +2,23 @@
 
 Docker images are available on [Docker Hub](https://hub.docker.com/r/certusone/near_exporter).
 
-Go is required to build the binary.
+Go >= 1.14 is required to build the binary.
 
-***Build the binary:***
+### How to build
+
 ```
 go build github.com/certusone/near_exporter/cmd/near_exporter
 ```
 
-***Systemd service example***
+### systemd service example
+
 ```
 cp near_exporter /usr/local/bin
 
-vi /etc/systemd/system/near-exporter.service
-
-#Add this content to the file:
-
+cat <<EOF > /etc/systemd/system/near-exporter.service
 [Unit]
-Description=near-exporter
+Description=Certus One near_exporter
+Documentation=https://github.com/certusone/near_exporter
 After=network.target
 
 [Service]
@@ -29,8 +29,12 @@ RestartSec=10s
 
 [Install]
 WantedBy=multi-user.target
+EOF
+```
 
+Enable and start the service:
 
+```
 systemctl enable --now near-exporter
 ```
 
